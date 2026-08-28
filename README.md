@@ -33,7 +33,94 @@ CodeGuard/
 - Ubuntu 22.04+ on the audit host (dev/CI can be macOS/Linux without a GPU)
 - Python 3.10+
 - NVIDIA CUDA Toolkit 12.x on the audit host
-- Git, with credentials that can **clone** the GitHub remotes (read-only is enough)
+- The system `git` binary on `PATH` (GitPython shells out to it; CodeGuard has no GitHub API client of its own)
+
+## Git access
+
+CodeGuard does **not** take a GitHub token, SSH key, or app installation. It runs `git clone` / `git fetch` as the **OS user that launched `auditor.py`**. Whatever that user can clone non-interactively, the auditor can clone. System-wide or per-user git/SSH config is enough; there is nothing to configure inside CodeGuard besides `repositories[].git_url`.
+
+Each run only **reads** the target: clone or fetch, check out the configured branch, hard-reset to `origin/<branch>`. It never commits and never pushes. **Read-only** access to every listed repo is sufficient (and preferable).
+
+Do not put tokens or passwords in `config.json` or in `git_url`. Those files can land in logs and in this repo.
+
+### Public repositories
+
+HTTPS with no extra credentials works:
+
+```json
+"git_url": "https://github.com/kecso/CodeGuard.git"
+```
+
+### Private repositories
+
+The audit host must already be able to fetch those remotes **without a password prompt**. Pick one method and make `git_url` match it (SSH URLs need SSH; HTTPS URLs need an HTTPS credential helper or token store).
+
+**SSH deploy key (good for one or a few private repos)**
+
+1. On the audit host, as the user that will run cron:
+
+   ```bash
+   ssh-keygen -t ed25519 -f ~/.ssh/codeguard_org_repo -C "codeguard@audit-host" -N ""
+   ```
+
+   An empty passphrase (`-N ""`) is what makes overnight cron work: cron has no TTY and usually no `ssh-agent`. Protect the key with filesystem permissions (`chmod 600`) and a locked-down account instead of a passphrase.
+
+2. GitHub → the **target** repo → Settings → Deploy keys → add the **public** key (`.pub`) with **Allow write access** left **off**.
+
+3. Point SSH at that key (so it is not mixed up with your personal GitHub key):
+
+   ```
+   # ~/.ssh/config  (mode 600)
+   Host github.com-org-repo
+     HostName github.com
+     User git
+     IdentityFile ~/.ssh/codeguard_org_repo
+     IdentitiesOnly yes
+   ```
+
+4. Use a matching URL in `config.json`:
+
+   ```json
+   "git_url": "git@github.com-org-repo:org/private-repo.git"
+   ```
+
+A given public key can only be a deploy key on one GitHub repo. For many private targets, use a machine user or a PAT instead.
+
+**Machine user (good for many private repos)**
+
+Create a GitHub account used only as a bot. Add it to each target as a collaborator with **read** permission (or to the org with a read-only team). Put **one** SSH key for that account on the audit host (`~/.ssh/id_ed25519` or an `IdentityFile` for `Host github.com`). Then use normal SSH URLs:
+
+```json
+"git_url": "git@github.com:org/private-repo.git"
+```
+
+**HTTPS personal access token**
+
+Create a **fine-grained** PAT with **Contents: Read** (and Metadata) on only the repos you audit. Store it in the OS git credential helper so `git` never prompts — for example `git config --global credential.helper store` after one successful `git ls-remote`, or a libsecret/manager helper on a desktop. `git_url` stays a normal HTTPS URL. Do not embed `https://user:token@github.com/...` in config.
+
+### Cron and other headless runs
+
+Cron does not load your interactive shell and typically has no `ssh-agent`. Auth must work from a non-interactive session of that same user:
+
+- `HOME` should be that user's home so `~/.ssh/config` and `~/.gitconfig` apply (cron usually sets this).
+- Prefer an SSH key **without** a passphrase, or a systemd user `ssh-agent` that is running when cron fires.
+- A helper that pops a GUI or waits on stdin will hang the job.
+
+### Check before the first audit
+
+Run these **as the same OS user** (and, if you use cron, with a similarly empty environment):
+
+```bash
+git --version
+# Public HTTPS
+git ls-remote --heads https://github.com/kecso/CodeGuard.git
+# Each private target (SSH or HTTPS, matching config.json)
+git ls-remote --heads git@github.com:org/private-repo.git
+```
+
+`ls-remote` should print refs and return immediately. If it asks for a password or hangs, the auditor will fail the same way. A failed clone is recorded for that repo and the run continues with the next one.
+
+Clones live under `workspace/<name>/` on the audit host. That tree is gitignored here, but it is a full copy of private source — keep the CodeGuard account and disk permissions accordingly.
 
 ## Setup
 
@@ -46,16 +133,24 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-`pytest` fails if coverage of `auditor.py` and `utils/` drops below **90%**, and prints uncovered lines. That gate is for CodeGuard itself.
+`pytest` fails if coverage of `auditor.py` and `utils/` drops below **90%**, and prints uncovered lines. That gate is for CodeGuard itself. Tests build throwaway local git repos; they do not need GitHub credentials.
 
 ### Audit host (CUDA)
 
 ```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip
+# CUDA toolkit 12.x from NVIDIA, if not already installed
+
+git clone https://github.com/kecso/CodeGuard.git
+cd CodeGuard
 python3 -m venv .venv
 source .venv/bin/activate
 pip install GitPython==3.1.43
 CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python==0.3.1 --no-cache-dir
 ```
+
+Configure git access (section above), then `git ls-remote` each `git_url` in `config.json`.
 
 `n_gpu_layers: -1` loads every layer that fits into VRAM and spills the rest (plus KV cache when `offload_kqv` is true) into system RAM. Place the GGUF at `model_settings.model_path`.
 
@@ -63,7 +158,7 @@ CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python==0.3.1 --no-cache-dir
 
 Edit `config.json`:
 
-- `repositories[].git_url` — GitHub clone URL (`https://github.com/org/repo.git` or `git@github.com:org/repo.git`)
+- `repositories[].git_url` — clone URL; scheme must match how that OS user authenticates (see **Git access**)
 - `repositories[].branch` and `output_report_dir`
 - `analysis_passes` — `security`, `memory`, `algorithmic`, `test_coverage`
 - `global_exclusions` — directories, name suffixes, max file size
@@ -104,10 +199,10 @@ Empty reports:
 .venv/bin/python auditor.py --repo CodeGuard --force
 ```
 
-Cron (midnight):
+Cron (midnight), as the user that can clone the targets:
 
 ```
-0 0 * * * /path/to/CodeGuard/.venv/bin/python /path/to/CodeGuard/auditor.py >> /var/log/codeguard.log 2>&1
+0 0 * * * cd /path/to/CodeGuard && /path/to/CodeGuard/.venv/bin/python auditor.py >> /var/log/codeguard.log 2>&1
 ```
 
 ## Step 0: test-run documentation
