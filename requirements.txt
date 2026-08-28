@@ -1,0 +1,7 @@
+# Git integration for LAN cloning, reset, commit, and push
+GitPython==3.1.43
+
+# Native Python bindings for GGUF inference with optional CUDA offload.
+# Install with CUDA on the audit host (see README). Tests and CI do not
+# require this package; model_runner imports it lazily.
+llama-cpp-python==0.3.1
