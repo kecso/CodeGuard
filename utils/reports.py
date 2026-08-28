@@ -30,7 +30,7 @@ class ReportSection:
 
 @dataclass(frozen=True)
 class ReportTarget:
-    """Where timestamped reports live inside a target checkout."""
+    """Where timestamped reports live under the CodeGuard deployment root."""
 
     directory: str
     prefix: str = ""
@@ -220,8 +220,8 @@ def has_new_findings(previous_markdown: str | None, current_markdown: str) -> bo
     return previous != current
 
 
-def load_state(repo_path: Path, target: ReportTarget) -> AuditState:
-    path = repo_path / target.state_relpath()
+def load_state(root: Path, target: ReportTarget) -> AuditState:
+    path = root / target.state_relpath()
     if not path.is_file():
         return AuditState()
     try:
@@ -230,23 +230,23 @@ def load_state(repo_path: Path, target: ReportTarget) -> AuditState:
         return AuditState()
 
 
-def save_state(repo_path: Path, target: ReportTarget, state: AuditState) -> Path:
+def save_state(root: Path, target: ReportTarget, state: AuditState) -> Path:
     return write_report(
-        repo_path, target.state_relpath(), json.dumps(state.to_json(), indent=2) + "\n"
+        root, target.state_relpath(), json.dumps(state.to_json(), indent=2) + "\n"
     )
 
 
-def write_report(repo_path: Path, relative_path: str, markdown: str) -> Path:
-    path = repo_path / relative_path
+def write_report(root: Path, relative_path: str, markdown: str) -> Path:
+    path = root / relative_path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(markdown, encoding="utf-8")
     return path
 
 
-def read_report(repo_path: Path, relative_path: str | None) -> str | None:
+def read_report(root: Path, relative_path: str | None) -> str | None:
     if not relative_path:
         return None
-    path = repo_path / relative_path
+    path = root / relative_path
     if not path.is_file():
         return None
     try:

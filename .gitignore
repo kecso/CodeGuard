@@ -17,7 +17,8 @@ coverage.json
 .ruff_cache/
 .DS_Store
 
-# Local runtime state — clones, weights, and generated reports stay off git
+# Local runtime state — clones, weights, and generated reports stay on this
+# machine. Audit runs never commit or push them.
 workspace/*
 !workspace/.gitkeep
 models/*

@@ -6,8 +6,6 @@ from pathlib import Path
 import pytest
 from git import Repo
 
-from utils.config import GitIdentity
-
 
 class FakeLlama:
     def __init__(self, **kwargs):
@@ -69,14 +67,10 @@ def write_config(path: Path, **overrides) -> Path:
         },
         "analysis_passes": ["security", "memory", "algorithmic", "test_coverage"],
         "test_settings": {"enabled": True, "timeout_seconds": 60},
-        "git": {
-            "commit_name": "CodeGuard Auditor",
-            "commit_email": "codeguard@localhost",
-        },
         "repositories": [
             {
                 "name": "sample",
-                "local_mirror_url": "ssh://git@example/sample.git",
+                "git_url": "ssh://git@example/sample.git",
                 "branch": "main",
                 "output_report_path": "reports/audit.md",
             }
@@ -117,8 +111,3 @@ def make_mirror(tmp_path: Path, files: dict[str, str], branch: str = "main") -> 
     bare = tmp_path / "mirror.git"
     Repo.clone_from(src, bare, bare=True)
     return bare
-
-
-@pytest.fixture
-def identity() -> GitIdentity:
-    return GitIdentity(commit_name="Tester", commit_email="tester@test")

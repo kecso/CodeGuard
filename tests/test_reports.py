@@ -4,13 +4,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from utils.reports import (
+    AuditState,
     ReportSection,
+    ReportTarget,
     STATUS_UNCHANGED_COMMIT,
     findings_fingerprint,
     has_new_findings,
+    load_state,
+    read_report,
     render_empty_report,
     render_report,
     report_target_from_paths,
+    save_state,
     write_report,
 )
 
@@ -109,3 +114,30 @@ def test_empty_report_and_target_paths() -> None:
     ) == "reports/nightly-20260828T000000Z.md"
     from_dir = report_target_from_paths(output_report_dir="reports/codeguard")
     assert from_dir.latest_real_relpath() == "reports/codeguard/latest-real.md"
+    dotted = report_target_from_paths(output_report_path="audit.md")
+    assert dotted.directory == "reports"
+    rootish = ReportTarget(directory=".", prefix="")
+    assert rootish.timestamped_relpath(
+        datetime(2026, 8, 28, tzinfo=timezone.utc)
+    ) == "20260828T000000Z.md"
+    try:
+        report_target_from_paths()
+        raise AssertionError("expected ValueError")
+    except ValueError:
+        pass
+
+
+def test_state_roundtrip_and_corrupt(tmp_path: Path) -> None:
+    from utils.reports import _optional_str
+
+    target = ReportTarget(directory="reports", prefix="audit")
+    assert load_state(tmp_path, target).last_commit is None
+    save_state(tmp_path, target, AuditState(last_commit="abc"))
+    assert load_state(tmp_path, target).last_commit == "abc"
+    (tmp_path / "reports" / "audit-state.json").write_text("{not json", encoding="utf-8")
+    assert load_state(tmp_path, target).last_commit is None
+    assert AuditState.from_json("nope").last_commit is None
+    assert read_report(tmp_path, None) is None
+    assert read_report(tmp_path, "missing.md") is None
+    assert _optional_str("") is None
+    assert _optional_str(1) is None

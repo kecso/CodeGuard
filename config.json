@@ -23,25 +23,15 @@
     "skip_unchanged_commit": true,
     "compare_to_latest_real": true
   },
-  "test_settings": {
-    "enabled": true,
-    "timeout_seconds": 600
-  },
-  "git": {
-    "commit_name": "CodeGuard Auditor",
-    "commit_email": "codeguard@localhost"
-  },
-  "repositories": [
-    {
-      "name": "core-api-service",
-      "local_mirror_url": "ssh://git@192.168.1.50/srv/git/core-api-service.git",
-      "branch": "main",
-      "output_report_dir": "reports/codeguard"
+    "test_settings": {
+        "enabled": true,
+        "timeout_seconds": 600
     },
+    "repositories": [
     {
-      "name": "frontend-dashboard",
-      "local_mirror_url": "ssh://git@192.168.1.50/srv/git/frontend-dashboard.git",
-      "branch": "develop",
+      "name": "CodeGuard",
+      "git_url": "https://github.com/kecso/CodeGuard.git",
+      "branch": "main",
       "output_report_dir": "reports/codeguard"
     }
   ]

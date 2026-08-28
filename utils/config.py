@@ -34,16 +34,10 @@ class GlobalExclusions:
 @dataclass(frozen=True)
 class RepositoryConfig:
     name: str
-    local_mirror_url: str
+    git_url: str
     branch: str
     output_report_dir: str
     report_prefix: str = ""
-
-
-@dataclass(frozen=True)
-class GitIdentity:
-    commit_name: str = "CodeGuard Auditor"
-    commit_email: str = "codeguard@localhost"
 
 
 @dataclass(frozen=True)
@@ -68,7 +62,6 @@ class AppConfig:
     global_exclusions: GlobalExclusions
     repositories: tuple[RepositoryConfig, ...]
     analysis_passes: tuple[str, ...]
-    git: GitIdentity = field(default_factory=GitIdentity)
     test_settings: TestSettings = field(default_factory=TestSettings)
     execution: ExecutionSettings = field(default_factory=ExecutionSettings)
     workspace_dir: str = "workspace"
@@ -81,7 +74,7 @@ DEFAULT_PASSES: tuple[str, ...] = (
     "test_coverage",
 )
 
-REQUIRED_REPO_KEYS = ("name", "local_mirror_url", "branch")
+REQUIRED_REPO_KEYS = ("name", "branch")
 
 
 def _require_dict(raw: Any, where: str) -> dict[str, Any]:
@@ -166,13 +159,18 @@ def _parse_repository(raw: Any, index: int) -> RepositoryConfig:
     directory, prefix = _parse_report_location(data, index)
     return RepositoryConfig(
         name=_require_str(data["name"], f"repositories[{index}].name"),
-        local_mirror_url=_require_str(
-            data["local_mirror_url"], f"repositories[{index}].local_mirror_url"
-        ),
+        git_url=_parse_git_url(data, index),
         branch=_require_str(data["branch"], f"repositories[{index}].branch"),
         output_report_dir=directory,
         report_prefix=prefix,
     )
+
+
+def _parse_git_url(data: dict[str, Any], index: int) -> str:
+    raw = data.get("git_url", data.get("local_mirror_url"))
+    if raw is None:
+        raise ConfigError(f"repositories[{index}] needs git_url")
+    return _require_str(raw, f"repositories[{index}].git_url")
 
 
 def _parse_report_location(data: dict[str, Any], index: int) -> tuple[str, str]:
@@ -200,20 +198,6 @@ def _parse_report_location(data: dict[str, Any], index: int) -> tuple[str, str]:
         report_prefix=prefix,
     )
     return target.directory, target.prefix
-
-
-def _parse_git(raw: Any) -> GitIdentity:
-    if raw is None:
-        return GitIdentity()
-    data = _require_dict(raw, "git")
-    return GitIdentity(
-        commit_name=_require_str(
-            data.get("commit_name", "CodeGuard Auditor"), "git.commit_name"
-        ),
-        commit_email=_require_str(
-            data.get("commit_email", "codeguard@localhost"), "git.commit_email"
-        ),
-    )
 
 
 def _parse_test_settings(raw: Any) -> TestSettings:
@@ -279,7 +263,6 @@ def load_config(path: Path | str) -> AppConfig:
             for index, item in enumerate(repositories_raw)
         ),
         analysis_passes=_parse_passes(data.get("analysis_passes")),
-        git=_parse_git(data.get("git")),
         test_settings=_parse_test_settings(data.get("test_settings")),
         execution=_parse_execution(data.get("execution")),
         workspace_dir=_require_str(

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CodeGuard orchestrator: fetch → parse → (test) → evaluate → write → sync → shutdown.
+"""CodeGuard orchestrator: fetch → parse → (test) → evaluate → write → shutdown.
 
 Repositories are always audited sequentially. The host is compute-limited;
 wall-clock time is not the constraint. Target language and layout do not matter.
@@ -48,12 +48,12 @@ class RepoRunResult:
     name: str
     success: bool
     error: str | None = None
-    published: bool = False
     files_extracted: int = 0
     chunks: int = 0
     tests_detected: bool = False
     status: str = STATUS_FULL
     skipped_inference: bool = False
+    report_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -74,7 +74,6 @@ def run_audit(
     *,
     project_root: Path,
     dry_run: bool = False,
-    skip_push: bool = False,
     only_repos: tuple[str, ...] | None = None,
     force: bool = False,
     llama_factory=None,
@@ -83,7 +82,7 @@ def run_audit(
     generated_at = now or datetime.now(timezone.utc)
     selected = _select_repos(config.repositories, only_repos)
     passes = resolve_passes(config.analysis_passes)
-    git_manager = GitManager(project_root / config.workspace_dir, config.git)
+    git_manager = GitManager(project_root / config.workspace_dir)
     test_runner = TestRunner(config.test_settings)
     model = ModelRunner(
         config.model_settings,
@@ -108,8 +107,8 @@ def run_audit(
                     git_manager=git_manager,
                     test_runner=test_runner,
                     model=model,
+                    project_root=project_root,
                     dry_run=dry_run,
-                    skip_push=skip_push,
                     force=force,
                     generated_at=generated_at,
                 )
@@ -131,8 +130,8 @@ def _audit_one(
     git_manager: GitManager,
     test_runner: TestRunner,
     model: ModelRunner,
+    project_root: Path,
     dry_run: bool,
-    skip_push: bool,
     force: bool,
     generated_at: datetime,
 ) -> RepoRunResult:
@@ -140,7 +139,7 @@ def _audit_one(
         checkout = git_manager.prepare(repo)
         commit = git_manager.source_sha(checkout)
         target = _target(repo)
-        state = load_state(checkout, target)
+        state = load_state(project_root, target)
 
         if (
             not force
@@ -168,17 +167,14 @@ def _audit_one(
                 ),
             )
             return _persist(
-                checkout=checkout,
+                project_root=project_root,
                 repo=repo,
-                git_manager=git_manager,
                 target=target,
                 state=state,
                 markdown=markdown,
                 status=STATUS_UNCHANGED_COMMIT,
                 commit=commit,
                 generated_at=generated_at,
-                skip_push=skip_push,
-                dry_run=dry_run,
                 update_latest_real=False,
                 fingerprint=state.last_fingerprint,
                 files_extracted=0,
@@ -187,10 +183,7 @@ def _audit_one(
                 skipped_inference=True,
             )
 
-        extractor = FileExtractor(
-            config.global_exclusions,
-            extra_exclude_dirs=(target.directory,),
-        )
+        extractor = FileExtractor(config.global_exclusions)
         extraction = extractor.extract(checkout)
         budget = prompt_budget_tokens(
             config.model_settings.context_window,
@@ -233,7 +226,7 @@ def _audit_one(
             status=status,
             previous_real=state.last_real_report,
         )
-        previous = read_report(checkout, state.last_real_report)
+        previous = read_report(project_root, state.last_real_report)
         update_latest = status == STATUS_FULL
         markdown = full_markdown
         fingerprint = findings_fingerprint(full_markdown)
@@ -260,17 +253,14 @@ def _audit_one(
             )
             update_latest = False
         return _persist(
-            checkout=checkout,
+            project_root=project_root,
             repo=repo,
-            git_manager=git_manager,
             target=target,
             state=state,
             markdown=markdown,
             status=status,
             commit=commit,
             generated_at=generated_at,
-            skip_push=skip_push,
-            dry_run=dry_run,
             update_latest_real=update_latest,
             fingerprint=fingerprint if update_latest else state.last_fingerprint,
             files_extracted=len(extraction.files),
@@ -285,17 +275,14 @@ def _audit_one(
 
 def _persist(
     *,
-    checkout: Path,
+    project_root: Path,
     repo: RepositoryConfig,
-    git_manager: GitManager,
     target: ReportTarget,
     state: AuditState,
     markdown: str,
     status: str,
     commit: str,
     generated_at: datetime,
-    skip_push: bool,
-    dry_run: bool,
     update_latest_real: bool,
     fingerprint: str | None,
     files_extracted: int,
@@ -304,13 +291,11 @@ def _persist(
     skipped_inference: bool,
 ) -> RepoRunResult:
     stamped = target.timestamped_relpath(generated_at)
-    write_report(checkout, stamped, markdown)
-    paths = [stamped, target.state_relpath()]
+    write_report(project_root, stamped, markdown)
     last_real = state.last_real_report
     if update_latest_real:
         latest = target.latest_real_relpath()
-        write_report(checkout, latest, markdown)
-        paths.append(latest)
+        write_report(project_root, latest, markdown)
         last_real = stamped
     next_state = AuditState(
         last_commit=commit,
@@ -319,24 +304,16 @@ def _persist(
         last_status=status,
         last_fingerprint=fingerprint,
     )
-    save_state(checkout, target, next_state)
-    published = False
-    if not dry_run:
-        published = git_manager.publish_paths(
-            checkout,
-            paths,
-            message=f"chore(audit): CodeGuard {status} {generated_at.date().isoformat()}",
-            skip_push=skip_push,
-        )
+    save_state(project_root, target, next_state)
     return RepoRunResult(
         name=repo.name,
         success=True,
-        published=published,
         files_extracted=files_extracted,
         chunks=chunks,
         tests_detected=tests_detected,
         status=status,
         skipped_inference=skipped_inference,
+        report_path=stamped,
     )
 
 
@@ -454,11 +431,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fetch, extract, and run tests without loading the GGUF model",
     )
     parser.add_argument(
-        "--skip-push",
-        action="store_true",
-        help="Commit the report locally but do not push to the mirror",
-    )
-    parser.add_argument(
         "--force",
         action="store_true",
         help="Ignore same-commit skip and latest-real comparison",
@@ -492,7 +464,6 @@ def main(argv: list[str] | None = None) -> int:
             config,
             project_root=project_root,
             dry_run=args.dry_run,
-            skip_push=args.skip_push,
             force=args.force,
             only_repos=tuple(args.repos) if args.repos else None,
         )
@@ -505,12 +476,12 @@ def main(argv: list[str] | None = None) -> int:
     for item in result.repos:
         if item.success:
             logger.info(
-                "%s: ok status=%s files=%s chunks=%s published=%s skipped_inference=%s",
+                "%s: ok status=%s files=%s chunks=%s report=%s skipped_inference=%s",
                 item.name,
                 item.status,
                 item.files_extracted,
                 item.chunks,
-                item.published,
+                item.report_path,
                 item.skipped_inference,
             )
         else:

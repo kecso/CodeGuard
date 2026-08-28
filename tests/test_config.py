@@ -32,7 +32,7 @@ def test_load_valid_config(tmp_path: Path) -> None:
                 "repositories": [
                     {
                         "name": "svc",
-                        "local_mirror_url": "/tmp/svc.git",
+                        "git_url": "/tmp/svc.git",
                         "branch": "main",
                         "output_report_path": "reports/a.md",
                     }
@@ -50,7 +50,6 @@ def test_load_valid_config(tmp_path: Path) -> None:
     assert config.repositories[0].output_report_dir == "reports"
     assert config.repositories[0].report_prefix == "a"
     assert config.execution.sequential is True
-    assert config.git.commit_name == "CodeGuard Auditor"
     assert config.test_settings.enabled is True
 
 
@@ -64,7 +63,7 @@ def test_default_passes_and_optional_sections(tmp_path: Path) -> None:
                 "repositories": [
                     {
                         "name": "svc",
-                        "local_mirror_url": "x",
+                        "git_url": "x",
                         "branch": "main",
                         "output_report_path": "r.md",
                     }
@@ -121,7 +120,7 @@ def test_invalid_json(tmp_path: Path) -> None:
                 "repositories": [
                     {
                         "name": "a",
-                        "local_mirror_url": "b",
+                        "git_url": "b",
                         "branch": "c",
                         "output_report_path": "d",
                     }
@@ -139,7 +138,7 @@ def test_invalid_json(tmp_path: Path) -> None:
                 "repositories": [
                     {
                         "name": "a",
-                        "local_mirror_url": "b",
+                        "git_url": "b",
                         "branch": "c",
                         "output_report_path": "d",
                     }
@@ -154,7 +153,7 @@ def test_invalid_json(tmp_path: Path) -> None:
                 "repositories": [
                     {
                         "name": "a",
-                        "local_mirror_url": "b",
+                        "git_url": "b",
                         "branch": "c",
                         "output_report_path": "d",
                     }
@@ -172,7 +171,7 @@ def test_invalid_json(tmp_path: Path) -> None:
                 "repositories": [
                     {
                         "name": "a",
-                        "local_mirror_url": "b",
+                        "git_url": "b",
                         "branch": "c",
                         "output_report_path": "d",
                     }
@@ -191,7 +190,7 @@ def test_invalid_json(tmp_path: Path) -> None:
                 "repositories": [
                     {
                         "name": "a",
-                        "local_mirror_url": "b",
+                        "git_url": "b",
                         "branch": "c",
                         "output_report_path": "d",
                     }
@@ -207,7 +206,7 @@ def test_invalid_json(tmp_path: Path) -> None:
                 "repositories": [
                     {
                         "name": "a",
-                        "local_mirror_url": "b",
+                        "git_url": "b",
                         "branch": "c",
                         "output_report_path": "d",
                     }
@@ -223,29 +222,13 @@ def test_invalid_json(tmp_path: Path) -> None:
                 "repositories": [
                     {
                         "name": "a",
-                        "local_mirror_url": "b",
+                        "git_url": "b",
                         "branch": "c",
                         "output_report_path": "d",
                     }
                 ],
             },
             "timeout_seconds",
-        ),
-        (
-            {
-                "model_settings": {"model_path": "m.gguf"},
-                "global_exclusions": {"directories": [], "extensions": []},
-                "git": "nope",
-                "repositories": [
-                    {
-                        "name": "a",
-                        "local_mirror_url": "b",
-                        "branch": "c",
-                        "output_report_path": "d",
-                    }
-                ],
-            },
-            "git must be an object",
         ),
     ],
 )
@@ -266,7 +249,7 @@ def test_repo_name_must_be_string(tmp_path: Path) -> None:
                 "repositories": [
                     {
                         "name": 1,
-                        "local_mirror_url": "b",
+                        "git_url": "b",
                         "branch": "c",
                         "output_report_path": "d",
                     }
@@ -279,6 +262,29 @@ def test_repo_name_must_be_string(tmp_path: Path) -> None:
         load_config(path)
 
 
+def test_git_url_accepts_legacy_local_mirror_url(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "model_settings": {"model_path": "m.gguf"},
+                "global_exclusions": {"directories": [], "extensions": []},
+                "repositories": [
+                    {
+                        "name": "svc",
+                        "local_mirror_url": "https://github.com/kecso/CodeGuard.git",
+                        "branch": "main",
+                        "output_report_path": "reports/a.md",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    assert config.repositories[0].git_url.endswith("CodeGuard.git")
+
+
 def test_output_report_dir_without_path(tmp_path: Path) -> None:
     path = tmp_path / "config.json"
     path.write_text(
@@ -289,7 +295,7 @@ def test_output_report_dir_without_path(tmp_path: Path) -> None:
                 "repositories": [
                     {
                         "name": "svc",
-                        "local_mirror_url": "x",
+                        "git_url": "x",
                         "branch": "main",
                         "output_report_dir": "reports/codeguard",
                     }
@@ -313,7 +319,7 @@ def test_repo_missing_report_location(tmp_path: Path) -> None:
                 "repositories": [
                     {
                         "name": "svc",
-                        "local_mirror_url": "x",
+                        "git_url": "x",
                         "branch": "main",
                     }
                 ],
@@ -336,7 +342,7 @@ def test_parallel_execution_rejected(tmp_path: Path) -> None:
                 "repositories": [
                     {
                         "name": "svc",
-                        "local_mirror_url": "x",
+                        "git_url": "x",
                         "branch": "main",
                         "output_report_path": "reports/a.md",
                     }
